@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 region_preview.png
+.env
+data/
+glossary.json
+peeklate.log
+captures/

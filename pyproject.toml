@@ -7,4 +7,6 @@ dependencies = [
     "mss>=10.0",
     "keyboard>=0.13",
     "pydantic-ai-slim[google]>=0.4",
+    "openpyxl>=3.1.5",
+    "requests>=2.34.2",
 ]

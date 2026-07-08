@@ -1,9 +1,15 @@
 """截圖模組 — 抓取 config.CHAT_REGION 指定的聊天框區域。"""
 
+import logging
+from datetime import datetime
+from pathlib import Path
+
 import mss
 import mss.tools
 
 import config
+
+log = logging.getLogger(__name__)
 
 
 def grab_chat_region() -> bytes:
@@ -15,6 +21,18 @@ def grab_chat_region() -> bytes:
     with mss.MSS() as sct:
         shot = sct.grab(config.CHAT_REGION)
         return mss.tools.to_png(shot.rgb, shot.size)
+
+
+def save_capture(png_bytes: bytes) -> Path | None:
+    """config.SAVE_CAPTURES 開啟時，把截圖存到 CAPTURE_DIR，回傳路徑；否則 None。"""
+    if not config.SAVE_CAPTURES:
+        return None
+    out_dir = Path(__file__).parent / config.CAPTURE_DIR
+    out_dir.mkdir(exist_ok=True)
+    path = out_dir / f"capture_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
+    path.write_bytes(png_bytes)
+    log.info("已存截圖 %s", path)
+    return path
 
 
 if __name__ == "__main__":

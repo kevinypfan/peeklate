@@ -1,27 +1,35 @@
 """Peeklate 進入點：熱鍵觸發截圖翻譯，結果顯示在 always-on-top 視窗。"""
 
 import argparse
+import logging
 import queue
 import threading
 
 import config
-from capture import grab_chat_region
+import logsetup
+from capture import grab_chat_region, save_capture
 from translator import translate_new_lines
 from ui import TranslationWindow
+
+log = logging.getLogger("peeklate.main")
 
 _results: queue.Queue = queue.Queue()
 _busy = threading.Event()
 
 
-def _worker(image_path: str | None) -> None:
+def _worker(image_path: str | None, player_names: list[str]) -> None:
     try:
         if image_path:
+            log.info("讀取圖片檔 %s", image_path)
             with open(image_path, "rb") as f:
                 png = f.read()
         else:
             png = grab_chat_region()
-        _results.put(("ok", translate_new_lines(png)))
+            log.info("截圖完成（%d bytes，區域 %s）", len(png), config.CHAT_REGION)
+            save_capture(png)  # SAVE_CAPTURES 開啟時才會落地
+        _results.put(("ok", translate_new_lines(png, player_names)))
     except Exception as e:  # API、截圖等任何失敗都回報到 UI
+        log.exception("翻譯失敗")  # 完整 traceback 進 log
         _results.put(("error", e))
     finally:
         _busy.clear()
@@ -30,16 +38,29 @@ def _worker(image_path: str | None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="遊戲隊友聊天翻譯小工具")
     parser.add_argument("--image", help="開發用：跳過截圖，直接翻譯這張圖片檔")
+    parser.add_argument(
+        "--debug", action="store_true", help="輸出更詳細的 log（含每則 OCR 內容）"
+    )
     args = parser.parse_args()
+    logsetup.configure(args.debug)
 
     def trigger() -> None:
         if _busy.is_set():  # 前一次翻譯還在跑就忽略這次觸發
+            log.debug("上一次翻譯還在跑，忽略這次觸發")
             return
         _busy.set()
+        players = window.get_player_names()
+        log.info("觸發翻譯（只看 %s）", players or "全部")
         window.set_status("翻譯中…")
-        threading.Thread(target=_worker, args=(args.image,), daemon=True).start()
+        threading.Thread(
+            target=_worker, args=(args.image, players), daemon=True
+        ).start()
 
-    window = TranslationWindow(on_translate=trigger, show_original=config.SHOW_ORIGINAL)
+    window = TranslationWindow(
+        on_translate=trigger,
+        show_original=config.SHOW_ORIGINAL,
+        default_players=", ".join(config.PLAYER_NAMES),
+    )
 
     def poll() -> None:
         try:
@@ -55,16 +76,22 @@ def main() -> None:
                 window.set_status(f"就緒（新增 {len(payload)} 則）")
             else:
                 window.set_status("就緒（沒有新訊息）")
+                log.info("沒有新訊息可顯示")
         window.after(100, poll)
 
     # macOS 上 keyboard 需要輔助使用權限，失敗就只靠視窗按鈕觸發
     try:
         import keyboard
 
-        keyboard.add_hotkey(config.HOTKEY, trigger)
+        # 熱鍵回呼在 keyboard 的執行緒;trigger 會讀 tk 輸入框,排回主執行緒跑
+        keyboard.add_hotkey(config.HOTKEY, lambda: window.after(0, trigger))
+        log.info("熱鍵 %s 註冊成功", config.HOTKEY.upper())
         window.set_status(f"就緒（熱鍵 {config.HOTKEY.upper()}）")
     except Exception as e:
+        log.warning("熱鍵註冊失敗：%s", e)
         window.set_status(f"熱鍵註冊失敗，請用「翻譯」按鈕（{e}）")
+
+    log.info("Peeklate 啟動完成，等待觸發")
 
     window.after(100, poll)
     window.mainloop()
