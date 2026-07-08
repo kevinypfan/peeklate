@@ -1,0 +1,10 @@
+[project]
+name = "peeklate"
+version = "0.1.0"
+description = "遊戲隊友聊天熱鍵翻譯小工具：截聊天框 → Gemini vision → 繁中譯文顯示在副螢幕小視窗"
+requires-python = ">=3.10"
+dependencies = [
+    "mss>=10.0",
+    "keyboard>=0.13",
+    "pydantic-ai-slim[google]>=0.4",
+]
