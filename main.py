@@ -72,7 +72,7 @@ def main() -> None:
                 window.set_status(f"錯誤：{payload}")
             elif payload:
                 for line in payload:
-                    window.append_line(line.original, line.translation)
+                    window.append_line(line.speaker, line.original, line.translation)
                 window.set_status(f"就緒（新增 {len(payload)} 則）")
             else:
                 window.set_status("就緒（沒有新訊息）")

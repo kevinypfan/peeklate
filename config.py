@@ -21,10 +21,16 @@ TRANSLATE_MODEL = "google:gemini-3.5-flash"
 # 譯文上方是否附原文（灰色小字）
 SHOW_ORIGINAL = True
 
-# 視窗與字級（覺得字小、視窗小就把這幾個數字調大）。
+# 視窗、字型、配色（覺得字小、視窗小就把數字調大）。
 WINDOW_SIZE = "520x640"  # 初始視窗大小 "寬x高"（之後仍可手動拖拉）
+# 字型：Windows 繁中建議微軟正黑體；找不到會自動 fallback。
+FONT_FAMILY = "Microsoft JhengHei UI"
 FONT_SIZE_TRANS = 17  # 譯文字級
-FONT_SIZE_ORIG = 15  # 原文字級（灰色小字）
+FONT_SIZE_ORIG = 13  # 原文字級（灰色小字）
+COLOR_BG = "#141414"  # 背景（近黑）
+COLOR_SPEAKER = "#e0af68"  # 發話者 ID（琥珀色，一眼看出誰說的）
+COLOR_TRANS = "#f5f5f5"  # 譯文（近白）
+COLOR_ORIG = "#9db4c0"  # 原文（帶點藍的灰，跟白色譯文區隔又夠亮好讀）
 
 # 只翻這些玩家說的話（聊天行 `[頻道] 玩家ID> 訊息` 中的玩家ID，比對不分大小寫、
 # 允許部分符合）。空清單 = 不指定玩家，改用下面的頻道過濾。

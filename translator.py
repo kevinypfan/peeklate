@@ -30,7 +30,8 @@ class OcrLine(BaseModel):
 
 
 class ChatLine(BaseModel):
-    original: str  # 「玩家ID: 原文」
+    speaker: str  # 玩家 ID
+    original: str  # 原文（不含發話者前綴）
     translation: str  # 繁體中文譯文
 
 
@@ -307,11 +308,12 @@ def translate_new_lines(png_bytes: bytes, player_names: list[str]) -> list[ChatL
     by_id = {t.id: t.translation for t in translations}
     out = [
         ChatLine(
-            original=f"{l.speaker}: {l.text}",
+            speaker=l.speaker,
+            original=l.text,
             translation=by_id.get(i, "（翻譯缺漏）"),
         )
         for i, l in enumerate(new_lines, 1)
     ]
     for c in out:
-        log.info("譯：%s → %s", c.original, c.translation)
+        log.info("譯：[%s] %s → %s", c.speaker, c.original, c.translation)
     return out
