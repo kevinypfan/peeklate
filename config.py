@@ -41,8 +41,12 @@ GROUP_CHANNEL_TAGS = []
 GLOSSARY_PATH = "glossary.json"
 
 # 手動維護的縮寫/黑話對照（地圖、模式、套裝縮寫…），補齊資料庫沒有的詞、
-# 並覆蓋自動表的錯義。優先度高於 GLOSSARY_PATH，可自行增修。
+# 並覆蓋自動表的錯義。優先度高於 GLOSSARY_PATH，可自行增修（改完即時生效）。
 SLANG_PATH = "slang.json"
+
+# 翻譯時，模型遇到術語表沒有的遊戲術語會記到這裡（只記錄、不動 slang.json）。
+# 用 `python review_candidates.py` 逐條審核後才補進 slang.json。
+CANDIDATES_PATH = "slang_candidates.jsonl"
 
 # debug 用：是否把每次送去翻譯的截圖存檔（帶時間戳，方便跟 log 對照，
 # 確認截到的畫面對不對）。存到 CAPTURE_DIR 目錄；不會自動清理。
@@ -96,8 +100,15 @@ Guidelines:
   real in-game English name. If you are unsure, OMIT the parentheses - never
   invent or guess an English name.
 
-The input is a numbered list of messages. For each, output its id and the
-Traditional Chinese translation.
+The input is a numbered list of messages. Output two things:
+- translations: for each message, its id and the Traditional Chinese translation.
+- new_terms: game-specific proper nouns / abbreviations / slang you saw in the
+  messages that were NOT in the provided glossary and that a translator could
+  easily get wrong (gear sets, weapons, exotics, brands, maps, game modes,
+  named items, activity abbreviations). For each give en (the short common
+  English form players type) and zh (your best-guess Traditional Chinese).
+  Skip ordinary words (hi, heal, thanks...) and anything already in the
+  glossary. Return an empty list if there are none.
 
 If a glossary of game terms is provided, treat it as authoritative for those
 terms (the slang/shorthand entries especially), but still pick the sense that

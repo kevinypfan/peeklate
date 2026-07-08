@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -38,6 +39,18 @@ class NumberedTranslation(BaseModel):
     translation: str
 
 
+class TermCandidate(BaseModel):
+    """翻譯時模型發現、但術語表沒收錄的遊戲術語，記下來供人工審核。"""
+
+    en: str  # 英文/縮寫短名
+    zh: str  # 模型猜的中文譯法
+
+
+class TranslationResult(BaseModel):
+    translations: list[NumberedTranslation]
+    new_terms: list[TermCandidate]  # 可能為空
+
+
 # 這些是伺服器端暫時性錯誤（模型過載、限流等），值得自動重試；
 # 其他錯誤（如 API key 錯的 401/403）重試也沒用，直接往外拋。
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -48,13 +61,16 @@ _MAX_BACKOFF = 30.0  # 單次等待上限（避免熱鍵按下後卡太久）
 # Agent 惰性建構：建構時就會讀 API key，延後到第一次翻譯才發生，
 # 沒設 key 時錯誤會顯示在 UI 狀態列而不是啟動時直接 crash。
 _ocr_agent: Agent | None = None
-_translate_agent: Agent | None = None
+_translate_agent: Agent | None = None  # 含候選詞的完整輸出
+_translate_simple_agent: Agent | None = None  # 只翻譯，備援用
 
 # 已見過的訊息（去重用），key 為「玩家ID: 原文」
 _seen: set[str] = set()
 
-# 合併後的術語表（slang 覆蓋 glossary，key 一律小寫），惰性建構
+# 合併後的術語表（slang 覆蓋 glossary，key 一律小寫）。
+# 記錄來源檔的 mtime，檔案一改就重載，改完 slang.json 不用重開程式。
 _terms: dict[str, str] | None = None
+_terms_mtimes: tuple[float, float] = (0.0, 0.0)
 
 
 def _retry_after(err: ModelHTTPError, attempt: int) -> float:
@@ -106,9 +122,22 @@ def _get_translate_agent() -> Agent:
         _translate_agent = Agent(
             config.TRANSLATE_MODEL,
             instructions=config.TRANSLATE_PROMPT,
-            output_type=list[NumberedTranslation],
+            output_type=TranslationResult,
         )
     return _translate_agent
+
+
+def _get_simple_translate_agent() -> Agent:
+    """備援：只輸出翻譯、不含候選詞。完整 schema 在弱模型上偶爾 parse 失敗，
+    退回這個較簡單的 schema，保證翻譯不會整個掛掉。"""
+    global _translate_simple_agent
+    if _translate_simple_agent is None:
+        _translate_simple_agent = Agent(
+            config.TRANSLATE_MODEL,
+            instructions=config.TRANSLATE_PROMPT,
+            output_type=list[NumberedTranslation],
+        )
+    return _translate_simple_agent
 
 
 def _load_json(path_str: str) -> dict[str, str]:
@@ -122,17 +151,67 @@ def _load_json(path_str: str) -> dict[str, str]:
         return {}
 
 
+def _mtime(path_str: str) -> float:
+    try:
+        return (Path(__file__).parent / path_str).stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _load_terms() -> dict[str, str]:
-    """合併 glossary 與 slang，key 一律轉小寫；slang 覆蓋 glossary 的同名詞。"""
-    global _terms
-    if _terms is None:
+    """合併 glossary 與 slang，key 一律轉小寫；slang 覆蓋 glossary 的同名詞。
+
+    來源檔一有變動就重載，改完 slang.json 下次翻譯即生效、不用重開程式。
+    """
+    global _terms, _terms_mtimes
+    mtimes = (_mtime(config.GLOSSARY_PATH), _mtime(config.SLANG_PATH))
+    if _terms is None or mtimes != _terms_mtimes:
         merged: dict[str, str] = {}
         for en, zh in _load_json(config.GLOSSARY_PATH).items():
             merged[en.lower()] = zh
         for en, zh in _load_json(config.SLANG_PATH).items():
             merged[en.lower()] = zh  # slang 優先
         _terms = merged
+        _terms_mtimes = mtimes
     return _terms
+
+
+def _log_candidates(candidates: list[TermCandidate]) -> None:
+    """把術語表沒有的候選詞 append 到 slang_candidates.jsonl（去重）。
+
+    只記錄、不寫進 slang.json；由 review_candidates.py 人工審核後才補入。
+    """
+    if not candidates:
+        return
+    path = Path(__file__).parent / config.CANDIDATES_PATH
+    known = set(_load_terms())  # 已在術語表裡的（小寫）
+    seen = set()  # 已記過的候選（小寫）
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                seen.add(json.loads(line)["en"].lower())
+            except (json.JSONDecodeError, KeyError):
+                continue
+    fresh = []
+    for c in candidates:
+        key = c.en.lower().strip()
+        if not key or key in known or key in seen:
+            continue
+        seen.add(key)
+        fresh.append(c)
+    if not fresh:
+        return
+    ts = datetime.now().isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as f:
+        for c in fresh:
+            f.write(
+                json.dumps(
+                    {"en": c.en, "zh": c.zh, "ts": ts}, ensure_ascii=False
+                )
+                + "\n"
+            )
+    log.info("記錄 %d 個候選術語 → %s：%s", len(fresh), path.name,
+             [c.en for c in fresh])
 
 
 def _match_terms(texts: list[str], limit: int = 20) -> dict[str, str]:
@@ -211,8 +290,21 @@ def translate_new_lines(png_bytes: bytes, player_names: list[str]) -> list[ChatL
             f"- {en} -> {zh}" for en, zh in terms.items()
         )
 
-    result2 = _run_with_retry(_get_translate_agent(), prompt, "第二段 翻譯")
-    by_id = {t.id: t.translation for t in result2.output}
+    # 完整輸出（翻譯 + 候選詞）；弱模型偶爾 parse 失敗，就退回只翻譯的簡單
+    # schema，確保翻譯本身永遠不會因為候選詞這個附加功能而整批掛掉。
+    try:
+        result2 = _run_with_retry(_get_translate_agent(), prompt, "第二段 翻譯")
+        translations = result2.output.translations
+        _log_candidates(result2.output.new_terms)
+    except ModelHTTPError:
+        raise  # API 層錯誤（額度/過載）照舊往外拋，交給 UI 顯示
+    except Exception as e:
+        log.warning("完整翻譯輸出解析失敗，退回簡易翻譯（略過候選詞）：%s", e)
+        result2 = _run_with_retry(
+            _get_simple_translate_agent(), prompt, "第二段 翻譯（簡易備援）"
+        )
+        translations = result2.output
+    by_id = {t.id: t.translation for t in translations}
     out = [
         ChatLine(
             original=f"{l.speaker}: {l.text}",
