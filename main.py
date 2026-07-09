@@ -4,17 +4,21 @@ import argparse
 import logging
 import queue
 import threading
+from collections import deque
 
 import config
 import logsetup
 from capture import grab_chat_region, save_capture
-from translator import translate_new_lines
+from translator import compose_reply, translate_new_lines
 from ui import TranslationWindow
 
 log = logging.getLogger("peeklate.main")
 
 _results: queue.Queue = queue.Queue()
-_busy = threading.Event()
+_busy = threading.Event()  # 翻譯單線
+_compose_busy = threading.Event()  # 回覆生成單線（與翻譯互不阻擋）
+# 最近翻譯到的隊友對話，供生成回覆時當情境。只在 poll（主執行緒）寫入。
+_recent: deque = deque(maxlen=config.COMPOSE_CONTEXT_LINES)
 
 
 def _worker(image_path: str | None, player_names: list[str]) -> None:
@@ -43,6 +47,21 @@ def _worker(image_path: str | None, player_names: list[str]) -> None:
         _busy.clear()
 
 
+def _compose_worker(text: str, context: list) -> None:
+    try:
+        options = compose_reply(
+            text,
+            context,
+            on_status=lambda msg: _results.put(("status", msg)),
+        )
+        _results.put(("reply", options))
+    except Exception as e:
+        log.exception("回覆生成失敗")
+        _results.put(("error", e))
+    finally:
+        _compose_busy.clear()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="遊戲隊友聊天翻譯小工具")
     parser.add_argument("--image", help="開發用：跳過截圖，直接翻譯這張圖片檔")
@@ -64,8 +83,25 @@ def main() -> None:
             target=_worker, args=(args.image, players), daemon=True
         ).start()
 
+    def compose_trigger() -> None:
+        if _compose_busy.is_set():  # 前一次還在生成就忽略
+            log.debug("上一次回覆還在生成，忽略這次觸發")
+            return
+        text = window.get_reply_text()
+        if not text:
+            window.set_status("先在「想回」輸入框打要說的話")
+            return
+        _compose_busy.set()
+        context = list(_recent)  # 快照，避免跨執行緒讀 deque
+        log.info("觸發回覆生成（帶 %d 則情境）", len(context))
+        window.set_status("生成回覆中…")
+        threading.Thread(
+            target=_compose_worker, args=(text, context), daemon=True
+        ).start()
+
     window = TranslationWindow(
         on_translate=trigger,
+        on_compose=compose_trigger,
         show_original=config.SHOW_ORIGINAL,
         default_players=", ".join(config.PLAYER_NAMES),
     )
@@ -80,9 +116,14 @@ def main() -> None:
                 window.set_status(payload)
             elif status == "error":
                 window.set_status(f"錯誤：{payload}")
+            elif status == "reply":
+                window.show_replies(payload)
+                window.clear_reply_input()
+                window.set_status(f"回覆建議已生成（{len(payload)} 種，點一下複製）")
             elif payload:
                 for line in payload:
                     window.append_line(line.speaker, line.original, line.translation)
+                    _recent.append(line)  # 累積情境給回覆生成用
                 window.set_status(f"就緒（新增 {len(payload)} 則）")
             else:
                 window.set_status("就緒（沒有新訊息）")

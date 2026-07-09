@@ -30,6 +30,11 @@ OCR_MODEL = "codex-cli:"
 TRANSLATE_MODEL = "codex-cli:"
 # TRANSLATE_MODEL = "google:gemini-3.5-flash"
 
+# 回覆生成用的模型（前綴規則同上，可跟翻譯用不同 backend）。
+COMPOSE_MODEL = "codex-cli:"
+# 生成回覆時帶入的「最近隊友對話」則數，當作情境參考。
+COMPOSE_CONTEXT_LINES = 8
+
 # 各 CLI 單次呼叫的逾時秒數（逾時會自動重試）。實測一趟：agy 約 6~8s、
 # claude 約 12~18s（要開圖）、codex 約 11s。
 ANTIGRAVITY_CLI_TIMEOUT = 60
@@ -137,4 +142,28 @@ The input is a numbered list of messages. Output two things:
 If a glossary of game terms is provided, treat it as authoritative for those
 terms (the slang/shorthand entries especially), but still pick the sense that
 fits the context.
+"""
+
+# 回覆生成：使用者用中文寫想說的話，產出可貼進遊戲頻道的英文說法
+COMPOSE_PROMPT = f"""\
+You help a player reply in {GAME_NAME} fireteam (team/group) chat. The player
+writes, in Traditional Chinese, what they want to say. Produce natural, idiomatic
+English the way a real gamer would type it in team chat — casual, brief, using
+common shorthand/abbreviations where natural (lfg, dps, inv, gg, brb...).
+
+Give EXACTLY 3 options that differ in register/length:
+- one most-natural everyday phrasing (the recommended default)
+- one shorter / more terse version
+- one more relaxed / casual version
+Each option is a single line, no quotes, no trailing explanation. For each,
+also give a very short Traditional-Chinese style label (style) such as
+「最常用」「簡短」「隨意」so the player can tell them apart.
+
+If recent teammate chat is provided as context, make the reply fit that
+conversation (answer what was asked, match the situation). Keep any game proper
+nouns in their real in-game English name (e.g. Escalation, Black Tusk, Summit),
+never a literal word-for-word translation.
+
+Output JSON: options = a list of exactly 3 objects, each with `style` (the short
+Chinese label) and `text` (the English phrasing).
 """

@@ -13,7 +13,9 @@ class TranslationWindow:
 
     MAX_LINES = 600  # 顯示區保留的行數上限(約 200 則),掛整天也不會越跑越慢
 
-    def __init__(self, on_translate, show_original=True, default_players=""):
+    def __init__(
+        self, on_translate, on_compose=None, show_original=True, default_players=""
+    ):
         self.show_original = show_original
         self.root = tk.Tk()
         self.root.title("Peeklate")
@@ -46,6 +48,28 @@ class TranslationWindow:
         tk.Label(
             bottom, text="只看:", fg=FG_ORIG, bg=BG, font=ui_font
         ).pack(side="right", padx=(8, 2))
+
+        # 回覆輸入列 + 回覆建議面板（pack 在 body 之前、bottom 之後，才會疊在
+        # 狀態列上方；面板在輸入框上方，像聊天室：下面打字、上面出結果）。
+        self._compose_font = (fam, config.FONT_SIZE_ORIG)
+        reply_bar = tk.Frame(self.root, bg=BG)
+        reply_bar.pack(fill="x", side="bottom")
+        tk.Label(
+            reply_bar, text="想回:", fg=FG_ORIG, bg=BG, font=ui_font
+        ).pack(side="left", padx=(8, 2))
+        tk.Button(
+            reply_bar, text="回覆", command=on_compose, font=ui_font
+        ).pack(side="right", padx=8, pady=4)
+        self.reply_input = tk.Entry(
+            reply_bar, bg="#2a2a2a", fg=FG_TRANS,
+            insertbackground=FG_TRANS, bd=0, font=ui_font,
+        )
+        self.reply_input.pack(side="left", fill="x", expand=True, pady=4)
+        if on_compose:
+            self.reply_input.bind("<Return>", lambda e: on_compose())
+
+        self.reply_panel = tk.Frame(self.root, bg=BG)
+        self.reply_panel.pack(fill="x", side="bottom")
 
         # 顯示區:唯讀 Text + scrollbar（填滿底部列以外的空間）
         body = tk.Frame(self.root, bg=BG)
@@ -91,6 +115,34 @@ class TranslationWindow:
         self.text.configure(state="disabled")
         self.text.see("end")
 
+    def get_reply_text(self) -> str:
+        return self.reply_input.get().strip()
+
+    def clear_reply_input(self) -> None:
+        self.reply_input.delete(0, "end")
+
+    def _copy(self, text: str) -> None:
+        """複製到剪貼簿（tkinter 內建）。update() 讓內容在程式仍在跑時就生效。"""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
+        self.set_status(f"已複製：{text}")
+
+    def show_replies(self, options) -> None:
+        """顯示回覆建議，每列點一下就把英文複製到剪貼簿。每次呼叫重建整個面板。"""
+        for w in self.reply_panel.winfo_children():
+            w.destroy()
+        for opt in options:
+            row = tk.Label(
+                self.reply_panel,
+                text=f"[{opt.style}] {opt.text}",
+                fg=FG_TRANS, bg="#20242b", anchor="w", justify="left",
+                wraplength=580, font=self._compose_font,
+                padx=8, pady=5, cursor="hand2",
+            )
+            row.pack(fill="x", padx=8, pady=2)
+            row.bind("<Button-1>", lambda e, t=opt.text: self._copy(t))
+
     def set_status(self, text: str) -> None:
         self.status.configure(text=text)
 
@@ -103,11 +155,19 @@ class TranslationWindow:
 
 
 if __name__ == "__main__":
-    # 單獨目視測試:塞幾則假訊息,按「翻譯」再 append 一則
+    # 單獨目視測試:塞幾則假訊息,按「翻譯」再 append 一則；「回覆」塞假建議
+    from types import SimpleNamespace
+
+    demo_opts = [
+        SimpleNamespace(style="最常用", text="Not playing, just testing something. Heading to bed soon."),
+        SimpleNamespace(style="簡短", text="Just testing, bed soon."),
+        SimpleNamespace(style="隨意", text="nah just poking at some stuff, gonna sleep in a bit"),
+    ]
     win = TranslationWindow(
         on_translate=lambda: win.append_line(
             "TestBtn", "test message from button", "按鈕觸發的測試訊息"
-        )
+        ),
+        on_compose=lambda: win.show_replies(demo_opts),
     )
     win.append_line("Uno_ATS", "anyone doing the summit today?", "今天有人要打高峰大廈（Summit）嗎?")
     win.append_line(

@@ -56,6 +56,15 @@ class TranslationResult(BaseModel):
     new_terms: list[TermCandidate] = []  # 弱模型常漏掉這欄，給預設值免得整批 parse 失敗
 
 
+class ReplyOption(BaseModel):
+    style: str  # 語氣標籤，顯示用（如「最常用」「簡短」「隨意」）
+    text: str  # 要複製進遊戲頻道的英文說法
+
+
+class ReplyOptions(BaseModel):
+    options: list[ReplyOption]
+
+
 # 這些是伺服器端暫時性錯誤（模型過載、限流等），值得自動重試；
 # 其他錯誤（如 API key 錯的 401/403）重試也沒用，直接往外拋。
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -68,6 +77,7 @@ _MAX_BACKOFF = 30.0  # 單次等待上限（避免熱鍵按下後卡太久）
 _ocr_agent: Agent | None = None
 _translate_agent: Agent | None = None  # 含候選詞的完整輸出
 _translate_simple_agent: Agent | None = None  # 只翻譯，備援用
+_compose_agent: Agent | None = None  # 回覆生成（中文意圖 → 英文說法）
 
 # 最近見過的訊息（去重用），key 為「玩家ID: 原文」。去重的目的只是「上次截圖
 # 還留在聊天框裡的行不要重翻」，所以只保留最近 _SEEN_MAX 筆（LRU）：同一句話
@@ -154,6 +164,17 @@ def _get_simple_translate_agent() -> Agent:
             output_type=list[NumberedTranslation],
         )
     return _translate_simple_agent
+
+
+def _get_compose_agent() -> Agent:
+    global _compose_agent
+    if _compose_agent is None:
+        _compose_agent = Agent(
+            config.COMPOSE_MODEL,
+            instructions=config.COMPOSE_PROMPT,
+            output_type=ReplyOptions,
+        )
+    return _compose_agent
 
 
 def _load_json(path_str: str) -> dict[str, str]:
@@ -340,6 +361,45 @@ def _run_translate(
             _get_simple_translate_agent(), prompt, "第二段 翻譯（簡易備援）", on_status
         )
         return result2.output, []
+
+
+def _compose_user_prompt(zh_text: str, context: list[ChatLine]) -> str:
+    """把使用者的中文意圖與最近隊友對話組成 compose 的 user prompt。"""
+    parts = []
+    if context:
+        # 用原文（隊友實際打的字）當情境，比中文譯文更貼近真實對話
+        lines = "\n".join(f"- {c.speaker}: {c.original}" for c in context)
+        parts.append("Recent teammate chat (context, most recent last):\n" + lines)
+    parts.append("What I want to say (Traditional Chinese):\n" + zh_text)
+    return "\n\n".join(parts)
+
+
+def compose_reply(
+    zh_text: str,
+    context: list[ChatLine] | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> list[ReplyOption]:
+    """把中文意圖轉成可貼進遊戲頻道的英文說法（3 種語氣）。
+
+    依 config.COMPOSE_MODEL 的前綴走某家 CLI 或 API，分派邏輯與翻譯一致。
+    """
+    user_prompt = _compose_user_prompt(zh_text, context or [])
+    backend, model = cli_backends.resolve(config.COMPOSE_MODEL)
+    if backend is not None:
+        r = cli_runner.run(
+            backend,
+            model,
+            config.COMPOSE_PROMPT,
+            user_text=user_prompt,
+            output_type=ReplyOptions,
+            label="回覆生成",
+            on_status=on_status,
+        )
+        return r.options
+    result = _run_with_retry(
+        _get_compose_agent(), user_prompt, "回覆生成", on_status
+    )
+    return result.output.options
 
 
 def translate_new_lines(
