@@ -125,9 +125,9 @@ uv run python review_candidates.py --list    # 只列出目前累積了哪些候
 | 前綴 | backend | 免費額度 | 特性 |
 |---|---|---|---|
 | `google:` | Gemini API（需 `GOOGLE_API_KEY`） | 各模型獨立池，如 3.1-flash-lite 500 次/天 | 快、有 structured output 保證 |
-| `cli:` | 本機 gemini CLI（OAuth 登入） | 單一池 1000 次/天、60 次/分 | 額度多，但每次呼叫多 ~3-5 秒啟動時間 |
+| `gemini-cli:` | 本機 gemini CLI（OAuth 登入） | 單一池 1000 次/天、60 次/分 | 額度多，但每次呼叫多 ~3-5 秒啟動時間 |
 
-預設 OCR 走 `cli:gemini-2.5-flash`（每次觸發必跑的瓶頸段，吃大池）、翻譯走 `google:gemini-3.5-flash`（只在有新訊息時呼叫），每天可觸發約 **1000 次**。CLI 額度也用完時，把 OCR 改回 `google:gemini-3.1-flash-lite`（500 次/天）還能再撐。
+預設 OCR 走 `gemini-cli:gemini-2.5-flash`（每次觸發必跑的瓶頸段，吃大池）、翻譯走 `google:gemini-3.5-flash`（只在有新訊息時呼叫），每天可觸發約 **1000 次**。CLI 額度也用完時，把 OCR 改回 `google:gemini-3.1-flash-lite`（500 次/天）還能再撐。
 
 > - API 沒有 `gemini-3.1-flash`（純 flash）這個名字，會回 404；只有帶 `-lite` 的版本。
 > - 遇到 `429 ...quota` 是當天免費額度用完（API 用量到 [AI Studio](https://aistudio.google.com/) 查）；`503 ...high demand` 是伺服器暫時過載。兩個 backend 都會自動重試（API 429 會照伺服器指定秒數等待）。

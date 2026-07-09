@@ -253,9 +253,9 @@ def _run_ocr(
 ) -> list[OcrLine]:
     """第一段：讀圖。依 config.OCR_MODEL 的前綴走 gemini CLI 或 API。"""
     spec = config.OCR_MODEL
-    if spec.startswith("cli:"):
+    if spec.startswith("gemini-cli:"):
         return gemini_cli.run(
-            spec[4:],
+            spec.removeprefix("gemini-cli:"),
             config.OCR_PROMPT,
             image_png=png_bytes,
             output_type=list[OcrLine],
@@ -280,10 +280,10 @@ def _run_translate(
     翻譯的簡單 schema，確保翻譯本身不會因候選詞這個附加功能而整批掛掉。
     """
     spec = config.TRANSLATE_MODEL
-    if spec.startswith("cli:"):
+    if spec.startswith("gemini-cli:"):
         try:
             r = gemini_cli.run(
-                spec[4:],
+                spec.removeprefix("gemini-cli:"),
                 config.TRANSLATE_PROMPT,
                 user_text=prompt,
                 output_type=TranslationResult,
@@ -294,7 +294,7 @@ def _run_translate(
         except gemini_cli.GeminiCliParseError as e:
             log.warning("完整翻譯輸出解析失敗，退回簡易翻譯（略過候選詞）：%s", e)
             out = gemini_cli.run(
-                spec[4:],
+                spec.removeprefix("gemini-cli:"),
                 config.TRANSLATE_PROMPT,
                 user_text=prompt,
                 output_type=list[NumberedTranslation],

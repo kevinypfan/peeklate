@@ -152,7 +152,7 @@ def run(
                 if e.retryable and attempt < _MAX_RETRIES:
                     wait = min(_BACKOFF_BASE * (2**attempt), _MAX_BACKOFF)
                     log.warning(
-                        "%s（cli:%s）失敗，%.0fs 後重試（第 %d/%d 次）：%s",
+                        "%s（gemini-cli:%s）失敗，%.0fs 後重試（第 %d/%d 次）：%s",
                         label, model, wait, attempt + 1, _MAX_RETRIES, e,
                     )
                     if on_status:
@@ -162,7 +162,7 @@ def run(
                         )
                     time.sleep(wait)
                     continue
-                log.error("%s（cli:%s）失敗：%s", label, model, e)
+                log.error("%s（gemini-cli:%s）失敗：%s", label, model, e)
                 raise
             try:
                 out = adapter.validate_json(_extract_json(resp))
@@ -170,7 +170,7 @@ def run(
                 parse_err = str(e)[:200]
                 if attempt < _MAX_RETRIES:
                     log.warning(
-                        "%s（cli:%s）輸出解析失敗，重試：%s", label, model, parse_err
+                        "%s（gemini-cli:%s）輸出解析失敗，重試：%s", label, model, parse_err
                     )
                     if on_status:
                         on_status(f"{label}：輸出解析失敗，重試中…")
@@ -179,7 +179,7 @@ def run(
                     f"輸出無法解析為預期格式：{parse_err}"
                 ) from e
             log.info(
-                "%s（cli:%s）成功，耗時 %.1fs", label, model, time.monotonic() - t0
+                "%s（gemini-cli:%s）成功，耗時 %.1fs", label, model, time.monotonic() - t0
             )
             return out
     finally:
