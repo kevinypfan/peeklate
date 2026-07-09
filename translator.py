@@ -174,6 +174,25 @@ def _mtime(path_str: str) -> float:
         return 0.0
 
 
+def _merge_into(src: dict, merged: dict[str, str]) -> None:
+    """把一份術語檔攤平進 merged（key 一律小寫）。
+
+    支援兩種寫法：
+    - 扁平："dps": "輸出 (...)"
+    - 分組："escalation": {"zh": "戰鬥升級 (Escalation)", "aka": ["esc", "escal"]}
+      分組時 canonical key 與每個 aka 都是可比對的縮寫，全部指向同一條 zh，
+      所以同一概念的多種拼法只維護一份譯文，不會再各寫各的飄掉。
+    """
+    for en, val in src.items():
+        if isinstance(val, dict):
+            zh = val.get("zh", "")
+            merged[en.lower()] = zh
+            for alias in val.get("aka", []):
+                merged[alias.lower()] = zh
+        else:
+            merged[en.lower()] = val
+
+
 def _load_terms() -> dict[str, str]:
     """合併 glossary 與 slang，key 一律轉小寫；slang 覆蓋 glossary 的同名詞。
 
@@ -183,10 +202,8 @@ def _load_terms() -> dict[str, str]:
     mtimes = (_mtime(config.GLOSSARY_PATH), _mtime(config.SLANG_PATH))
     if _terms is None or mtimes != _terms_mtimes:
         merged: dict[str, str] = {}
-        for en, zh in _load_json(config.GLOSSARY_PATH).items():
-            merged[en.lower()] = zh
-        for en, zh in _load_json(config.SLANG_PATH).items():
-            merged[en.lower()] = zh  # slang 優先
+        _merge_into(_load_json(config.GLOSSARY_PATH), merged)
+        _merge_into(_load_json(config.SLANG_PATH), merged)  # slang 優先
         _terms = merged
         _terms_sorted = sorted(merged.items(), key=lambda kv: -len(kv[0]))
         _terms_mtimes = mtimes
@@ -240,10 +257,14 @@ def _match_terms(texts: list[str], limit: int = 20) -> dict[str, str]:
     _load_terms()  # 確保 _terms_sorted 是最新的（來源檔變動會重載）
     joined = "\n".join(texts)
     hits: dict[str, str] = {}
+    seen_zh: set[str] = set()  # 同一譯文只送一次（esc/escalation 都命中也只列一條）
     for en, zh in _terms_sorted:
+        if zh in seen_zh:
+            continue
         pat = rf"(?<![A-Za-z0-9]){re.escape(en)}(?![A-Za-z0-9])"
         if re.search(pat, joined, re.IGNORECASE):
             hits[en] = zh
+            seen_zh.add(zh)
             if len(hits) >= limit:
                 break
     return hits
