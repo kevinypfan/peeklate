@@ -20,7 +20,8 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.exceptions import ModelHTTPError
 
-import antigravity_cli
+import cli_backends
+import cli_runner
 import config
 
 log = logging.getLogger(__name__)
@@ -251,11 +252,12 @@ def _match_terms(texts: list[str], limit: int = 20) -> dict[str, str]:
 def _run_ocr(
     png_bytes: bytes, on_status: Callable[[str], None] | None
 ) -> list[OcrLine]:
-    """第一段：讀圖。依 config.OCR_MODEL 的前綴走 gemini CLI 或 API。"""
-    spec = config.OCR_MODEL
-    if spec.startswith("antigravity-cli:"):
-        return antigravity_cli.run(
-            spec.removeprefix("antigravity-cli:"),
+    """第一段：讀圖。依 config.OCR_MODEL 的前綴走某家 CLI 或 API。"""
+    backend, model = cli_backends.resolve(config.OCR_MODEL)
+    if backend is not None:
+        return cli_runner.run(
+            backend,
+            model,
             config.OCR_PROMPT,
             image_png=png_bytes,
             output_type=list[OcrLine],
@@ -274,16 +276,17 @@ def _run_ocr(
 def _run_translate(
     prompt: str, on_status: Callable[[str], None] | None
 ) -> tuple[list[NumberedTranslation], list[TermCandidate]]:
-    """第二段：翻譯。依 config.TRANSLATE_MODEL 的前綴走 gemini CLI 或 API。
+    """第二段：翻譯。依 config.TRANSLATE_MODEL 的前綴走某家 CLI 或 API。
 
     兩條路徑的備援語意一致：完整輸出（翻譯 + 候選詞）解析失敗時，退回只有
     翻譯的簡單 schema，確保翻譯本身不會因候選詞這個附加功能而整批掛掉。
     """
-    spec = config.TRANSLATE_MODEL
-    if spec.startswith("antigravity-cli:"):
+    backend, model = cli_backends.resolve(config.TRANSLATE_MODEL)
+    if backend is not None:
         try:
-            r = antigravity_cli.run(
-                spec.removeprefix("antigravity-cli:"),
+            r = cli_runner.run(
+                backend,
+                model,
                 config.TRANSLATE_PROMPT,
                 user_text=prompt,
                 output_type=TranslationResult,
@@ -291,10 +294,11 @@ def _run_translate(
                 on_status=on_status,
             )
             return r.translations, r.new_terms
-        except antigravity_cli.AntigravityCliParseError as e:
+        except cli_runner.CliParseError as e:
             log.warning("完整翻譯輸出解析失敗，退回簡易翻譯（略過候選詞）：%s", e)
-            out = antigravity_cli.run(
-                spec.removeprefix("antigravity-cli:"),
+            out = cli_runner.run(
+                backend,
+                model,
                 config.TRANSLATE_PROMPT,
                 user_text=prompt,
                 output_type=list[NumberedTranslation],

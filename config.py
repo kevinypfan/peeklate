@@ -8,31 +8,43 @@ CHAT_REGION = {"left": 59, "top": 867, "width": 696, "height": 330}
 # 全域熱鍵（keyboard 套件格式，例如 "f9"、"ctrl+shift+t"）
 HOTKEY = "f9"
 
-# 兩段式管線各用一個模型，前綴決定 backend、且各自吃不同的免費額度池：
+# 兩段式管線各用一個模型，前綴決定 backend、且各自吃不同的額度池：
 # - "google:<model>" — Gemini API（pydantic-ai，需要 GOOGLE_API_KEY）。
 #   各模型有自己的免費池，例如 gemini-3.1-flash-lite 500/天、gemma 系列 1500/天。
 # - "antigravity-cli:<model>" — 本機的 Antigravity CLI（agy）。模型名照
 #   `agy models` 列出的完整名稱寫（含空格括號）。個人帳號免費額度跟 API key
 #   互相獨立。舊的 gemini CLI 已於 2026-06-18 被 Google 停止服務個人帳號，
 #   安裝 agy：curl -fsSL https://antigravity.google/cli/install.sh | bash
-# 預設：OCR（每次觸發必跑的瓶頸段）走 Antigravity 池；翻譯留在 API（有
-# structured output 的 schema 保證，且只在有新訊息時才呼叫）。
+# - "claude-cli:<model>" — 本機的 Claude Code CLI。模型寫 alias（sonnet／opus／
+#   fable）或完整 model id。吃 Claude 訂閱額度。
+# - "codex-cli:<model>" — 本機的 Codex CLI（需 `codex login`）。吃 OpenAI 額度。
+#   模型留空（"codex-cli:"）就用 codex 自己的預設模型。
+# 換 backend 只要改前綴，不必動程式碼；額度用盡時錯誤訊息會直接說要換哪個。
+# 預設：兩段都走 Antigravity 池（免費）。
 # 注意：API 沒有 "gemini-3.1-flash"（純 flash）這個名字，會 404；lite 才有。
-OCR_MODEL = "antigravity-cli:Gemini 3.5 Flash (Low)"
-TRANSLATE_MODEL = "google:gemini-3.5-flash"
+# OCR_MODEL = "antigravity-cli:Gemini 3.5 Flash (Low)"
+# TRANSLATE_MODEL = "antigravity-cli:Gemini 3.5 Flash (Low)"
+# OCR_MODEL = "claude-cli:haiku"
+# TRANSLATE_MODEL = "claude-cli:sonnet"
+OCR_MODEL = "codex-cli:"
+TRANSLATE_MODEL = "codex-cli:"
+# TRANSLATE_MODEL = "google:gemini-3.5-flash"
 
-# agy 單次呼叫的逾時秒數（實測一趟約 6s；逾時會自動重試）
+# 各 CLI 單次呼叫的逾時秒數（逾時會自動重試）。實測一趟：agy 約 6~8s、
+# claude 約 12~18s（要開圖）、codex 約 11s。
 ANTIGRAVITY_CLI_TIMEOUT = 60
+CLAUDE_CLI_TIMEOUT = 120
+CODEX_CLI_TIMEOUT = 120
 
 # 譯文上方是否附原文（灰色小字）
 SHOW_ORIGINAL = True
 
 # 視窗、字型、配色（覺得字小、視窗小就把數字調大）。
-WINDOW_SIZE = "520x640"  # 初始視窗大小 "寬x高"（之後仍可手動拖拉）
+WINDOW_SIZE = "640x900"  # 初始視窗大小 "寬x高"（之後仍可手動拖拉）
 # 字型：Windows 繁中建議微軟正黑體；找不到會自動 fallback。
 FONT_FAMILY = "Microsoft JhengHei UI"
 FONT_SIZE_TRANS = 17  # 譯文字級
-FONT_SIZE_ORIG = 13  # 原文字級（灰色小字）
+FONT_SIZE_ORIG = 14  # 原文字級（灰色小字）
 COLOR_BG = "#141414"  # 背景（近黑）
 COLOR_SPEAKER = "#e0af68"  # 發話者 ID（琥珀色，一眼看出誰說的）
 COLOR_TRANS = "#f5f5f5"  # 譯文（近白）
