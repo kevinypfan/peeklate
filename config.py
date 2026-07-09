@@ -11,18 +11,18 @@ HOTKEY = "f9"
 # 兩段式管線各用一個模型，前綴決定 backend、且各自吃不同的免費額度池：
 # - "google:<model>" — Gemini API（pydantic-ai，需要 GOOGLE_API_KEY）。
 #   各模型有自己的免費池，例如 gemini-3.1-flash-lite 500/天、gemma 系列 1500/天。
-# - "gemini-cli:<model>" — 本機的 gemini CLI（需先 npm install -g @google/gemini-cli
-#   並執行一次 `gemini` 登入 Google 帳號）。個人帳號免費 1000 次/天、60 次/分，
-#   單一池不分模型，跟 API key 的額度互相獨立。
-# 預設：OCR（每次觸發必跑的瓶頸段）走 CLI 的 1000/天池；翻譯留在 API（有
+# - "antigravity-cli:<model>" — 本機的 Antigravity CLI（agy）。模型名照
+#   `agy models` 列出的完整名稱寫（含空格括號）。個人帳號免費額度跟 API key
+#   互相獨立。舊的 gemini CLI 已於 2026-06-18 被 Google 停止服務個人帳號，
+#   安裝 agy：curl -fsSL https://antigravity.google/cli/install.sh | bash
+# 預設：OCR（每次觸發必跑的瓶頸段）走 Antigravity 池；翻譯留在 API（有
 # structured output 的 schema 保證，且只在有新訊息時才呼叫）。
-# 這樣每天可觸發 ~1000 次，代價是 CLI 每次呼叫多 ~3-5 秒啟動開銷。
 # 注意：API 沒有 "gemini-3.1-flash"（純 flash）這個名字，會 404；lite 才有。
-OCR_MODEL = "gemini-cli:gemini-2.5-flash"
+OCR_MODEL = "antigravity-cli:Gemini 3.5 Flash (Low)"
 TRANSLATE_MODEL = "google:gemini-3.5-flash"
 
-# gemini CLI 單次呼叫的逾時秒數（含 ~2.5s 啟動時間；逾時會自動重試）
-GEMINI_CLI_TIMEOUT = 60
+# agy 單次呼叫的逾時秒數（實測一趟約 6s；逾時會自動重試）
+ANTIGRAVITY_CLI_TIMEOUT = 60
 
 # 譯文上方是否附原文（灰色小字）
 SHOW_ORIGINAL = True

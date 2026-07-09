@@ -12,7 +12,7 @@
 - Windows、遊戲以**無邊框視窗**執行（獨佔全螢幕會截到黑畫面）
 - Python ≥ 3.10
 - Gemini API key（免費層即可）：https://aistudio.google.com/apikey
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli)（預設的 OCR backend；`npm install -g @google/gemini-cli` 後執行一次 `gemini` 登入 Google 帳號）。不想裝的話把 `config.py` 的 `OCR_MODEL` 改回 `google:` 前綴即可，見下方「翻譯 backend」
+- [Antigravity CLI](https://antigravity.google)（預設的 OCR backend；`curl -fsSL https://antigravity.google/cli/install.sh | bash` 安裝後執行一次 `agy` 登入 Google 帳號）。不想裝的話把 `config.py` 的 `OCR_MODEL` 改回 `google:` 前綴即可，見下方「翻譯 backend」
 
 ## 安裝
 
@@ -118,20 +118,21 @@ uv run python review_candidates.py --list    # 只列出目前累積了哪些候
 
 所有設定都在 `config.py`：截圖區域、熱鍵、模型（兩段各一：`OCR_MODEL` 讀字、`TRANSLATE_MODEL` 翻譯）、是否顯示原文（`SHOW_ORIGINAL`）、預設發話者（`PLAYER_NAMES`）、群組頻道標籤（`GROUP_CHANNEL_TAGS`）、術語表路徑（`GLOSSARY_PATH`）。
 
-### 翻譯 backend：API 或 gemini CLI
+### 翻譯 backend：API 或 Antigravity CLI
 
 `OCR_MODEL` / `TRANSLATE_MODEL` 的前綴決定走哪個 backend，兩段可獨立切換，各吃不同的免費額度池：
 
 | 前綴 | backend | 免費額度 | 特性 |
 |---|---|---|---|
 | `google:` | Gemini API（需 `GOOGLE_API_KEY`） | 各模型獨立池，如 3.1-flash-lite 500 次/天 | 快、有 structured output 保證 |
-| `gemini-cli:` | 本機 gemini CLI（OAuth 登入） | 單一池 1000 次/天、60 次/分 | 額度多，但每次呼叫多 ~3-5 秒啟動時間 |
+| `antigravity-cli:` | 本機 Antigravity CLI（`agy`，OAuth 登入） | 掛在 Antigravity 個人方案，與 API 池獨立 | 額度另計，每次呼叫約 6 秒 |
 
-預設 OCR 走 `gemini-cli:gemini-2.5-flash`（每次觸發必跑的瓶頸段，吃大池）、翻譯走 `google:gemini-3.5-flash`（只在有新訊息時呼叫），每天可觸發約 **1000 次**。CLI 額度也用完時，把 OCR 改回 `google:gemini-3.1-flash-lite`（500 次/天）還能再撐。
+預設 OCR 走 `antigravity-cli:Gemini 3.5 Flash (Low)`（每次觸發必跑的瓶頸段；模型名照 `agy models` 列的完整名稱寫）、翻譯走 `google:gemini-3.5-flash`（只在有新訊息時呼叫）。Antigravity 額度用完時，把 OCR 改回 `google:gemini-3.1-flash-lite`（500 次/天）還能再撐。
 
+> - 舊的 gemini CLI backend 已移除：Google 於 2026-06-18 停止讓 Gemini CLI 服務個人帳號，個人免費額度全面遷往 Antigravity。
 > - API 沒有 `gemini-3.1-flash`（純 flash）這個名字，會回 404；只有帶 `-lite` 的版本。
 > - 遇到 `429 ...quota` 是當天免費額度用完（API 用量到 [AI Studio](https://aistudio.google.com/) 查）；`503 ...high demand` 是伺服器暫時過載。兩個 backend 都會自動重試（API 429 會照伺服器指定秒數等待）。
-> - CLI backend 回報「找不到 gemini 指令」= 還沒裝 CLI；輸出解析失敗時會自動附上錯誤重問、再不行退回只翻譯的簡單格式。
+> - agy backend 回報「找不到 agy 指令」= 還沒裝 Antigravity CLI；輸出解析失敗時會自動附上錯誤重問、再不行退回只翻譯的簡單格式。
 
 ## 換別的遊戲
 
