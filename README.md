@@ -12,6 +12,7 @@
 - Windows、遊戲以**無邊框視窗**執行（獨佔全螢幕會截到黑畫面）
 - Python ≥ 3.10
 - Gemini API key（免費層即可）：https://aistudio.google.com/apikey
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli)（預設的 OCR backend；`npm install -g @google/gemini-cli` 後執行一次 `gemini` 登入 Google 帳號）。不想裝的話把 `config.py` 的 `OCR_MODEL` 改回 `google:` 前綴即可，見下方「翻譯 backend」
 
 ## 安裝
 
@@ -115,12 +116,22 @@ uv run python review_candidates.py --list    # 只列出目前累積了哪些候
 
 ## 調整
 
-所有設定都在 `config.py`：截圖區域、熱鍵、模型（兩段各一：`OCR_MODEL` 讀字、`TRANSLATE_MODEL` 翻譯，Pydantic AI 格式，換供應商只改字串）、是否顯示原文（`SHOW_ORIGINAL`）、預設發話者（`PLAYER_NAMES`）、群組頻道標籤（`GROUP_CHANNEL_TAGS`）、術語表路徑（`GLOSSARY_PATH`）。
+所有設定都在 `config.py`：截圖區域、熱鍵、模型（兩段各一：`OCR_MODEL` 讀字、`TRANSLATE_MODEL` 翻譯）、是否顯示原文（`SHOW_ORIGINAL`）、預設發話者（`PLAYER_NAMES`）、群組頻道標籤（`GROUP_CHANNEL_TAGS`）、術語表路徑（`GLOSSARY_PATH`）。
 
-兩段預設都用 `gemini-3.1-flash-lite`：它免費層每日額度（RPD）有 **500**，是 2.5/3.5 系列（20/天）的 25 倍，最適合這種按熱鍵頻繁觸發的工具。想要翻譯品質更好、但每天次數用不多時，可把 `TRANSLATE_MODEL` 改成 `gemini-3.5-flash`（每日只有 20 次）。
+### 翻譯 backend：API 或 gemini CLI
 
-> - 沒有 `gemini-3.1-flash`（純 flash）這個名字，會回 404；只有帶 `-lite` 的版本。
-> - 遇到 `429 ...quota` 是當天免費額度用完（到 [AI Studio](https://aistudio.google.com/) 可查各模型用量）；`503 ...high demand` 是伺服器暫時過載。兩者工具都會自動重試（429 會照伺服器指定秒數等待）。
+`OCR_MODEL` / `TRANSLATE_MODEL` 的前綴決定走哪個 backend，兩段可獨立切換，各吃不同的免費額度池：
+
+| 前綴 | backend | 免費額度 | 特性 |
+|---|---|---|---|
+| `google:` | Gemini API（需 `GOOGLE_API_KEY`） | 各模型獨立池，如 3.1-flash-lite 500 次/天 | 快、有 structured output 保證 |
+| `cli:` | 本機 gemini CLI（OAuth 登入） | 單一池 1000 次/天、60 次/分 | 額度多，但每次呼叫多 ~3-5 秒啟動時間 |
+
+預設 OCR 走 `cli:gemini-2.5-flash`（每次觸發必跑的瓶頸段，吃大池）、翻譯走 `google:gemini-3.5-flash`（只在有新訊息時呼叫），每天可觸發約 **1000 次**。CLI 額度也用完時，把 OCR 改回 `google:gemini-3.1-flash-lite`（500 次/天）還能再撐。
+
+> - API 沒有 `gemini-3.1-flash`（純 flash）這個名字，會回 404；只有帶 `-lite` 的版本。
+> - 遇到 `429 ...quota` 是當天免費額度用完（API 用量到 [AI Studio](https://aistudio.google.com/) 查）；`503 ...high demand` 是伺服器暫時過載。兩個 backend 都會自動重試（API 429 會照伺服器指定秒數等待）。
+> - CLI backend 回報「找不到 gemini 指令」= 還沒裝 CLI；輸出解析失敗時會自動附上錯誤重問、再不行退回只翻譯的簡單格式。
 
 ## 換別的遊戲
 

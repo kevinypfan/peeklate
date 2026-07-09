@@ -21,6 +21,7 @@ from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.exceptions import ModelHTTPError
 
 import config
+import gemini_cli
 
 log = logging.getLogger(__name__)
 
@@ -247,6 +248,75 @@ def _match_terms(texts: list[str], limit: int = 20) -> dict[str, str]:
     return hits
 
 
+def _run_ocr(
+    png_bytes: bytes, on_status: Callable[[str], None] | None
+) -> list[OcrLine]:
+    """第一段：讀圖。依 config.OCR_MODEL 的前綴走 gemini CLI 或 API。"""
+    spec = config.OCR_MODEL
+    if spec.startswith("cli:"):
+        return gemini_cli.run(
+            spec[4:],
+            config.OCR_PROMPT,
+            image_png=png_bytes,
+            output_type=list[OcrLine],
+            label="第一段 OCR 讀字",
+            on_status=on_status,
+        )
+    result = _run_with_retry(
+        _get_ocr_agent(),
+        [BinaryContent(data=png_bytes, media_type="image/png")],
+        "第一段 OCR 讀字",
+        on_status,
+    )
+    return result.output
+
+
+def _run_translate(
+    prompt: str, on_status: Callable[[str], None] | None
+) -> tuple[list[NumberedTranslation], list[TermCandidate]]:
+    """第二段：翻譯。依 config.TRANSLATE_MODEL 的前綴走 gemini CLI 或 API。
+
+    兩條路徑的備援語意一致：完整輸出（翻譯 + 候選詞）解析失敗時，退回只有
+    翻譯的簡單 schema，確保翻譯本身不會因候選詞這個附加功能而整批掛掉。
+    """
+    spec = config.TRANSLATE_MODEL
+    if spec.startswith("cli:"):
+        try:
+            r = gemini_cli.run(
+                spec[4:],
+                config.TRANSLATE_PROMPT,
+                user_text=prompt,
+                output_type=TranslationResult,
+                label="第二段 翻譯",
+                on_status=on_status,
+            )
+            return r.translations, r.new_terms
+        except gemini_cli.GeminiCliParseError as e:
+            log.warning("完整翻譯輸出解析失敗，退回簡易翻譯（略過候選詞）：%s", e)
+            out = gemini_cli.run(
+                spec[4:],
+                config.TRANSLATE_PROMPT,
+                user_text=prompt,
+                output_type=list[NumberedTranslation],
+                label="第二段 翻譯（簡易備援）",
+                on_status=on_status,
+            )
+            return out, []
+    try:
+        result2 = _run_with_retry(
+            _get_translate_agent(), prompt, "第二段 翻譯", on_status
+        )
+        return result2.output.translations, result2.output.new_terms
+    except ModelHTTPError:
+        raise  # API 層錯誤（額度/過載）照舊往外拋，交給 UI 顯示
+    except Exception as e:
+        log.warning("完整翻譯輸出解析失敗，退回簡易翻譯（略過候選詞）：%s", e)
+        result2 = _run_with_retry(
+            _get_simple_translate_agent(), prompt, "第二段 翻譯（簡易備援）", on_status
+        )
+        return result2.output, []
+
+
 def translate_new_lines(
     png_bytes: bytes,
     player_names: list[str],
@@ -260,13 +330,7 @@ def translate_new_lines(
     從 worker thread 呼叫（不在 asyncio event loop 內），故可直接用 run_sync。
     """
     log.info("開始翻譯：只看 %s", player_names or "（不指定，用頻道過濾）")
-    result = _run_with_retry(
-        _get_ocr_agent(),
-        [BinaryContent(data=png_bytes, media_type="image/png")],
-        "第一段 OCR 讀字",
-        on_status,
-    )
-    ocr_lines = result.output
+    ocr_lines = _run_ocr(png_bytes, on_status)
     log.info("OCR 讀到 %d 則：", len(ocr_lines))
     for l in ocr_lines:
         log.debug("  [%s] %s> %s", l.channel, l.speaker, l.text)
@@ -320,23 +384,7 @@ def translate_new_lines(
             f"- {en} -> {zh}" for en, zh in terms.items()
         )
 
-    # 完整輸出（翻譯 + 候選詞）；弱模型偶爾 parse 失敗，就退回只翻譯的簡單
-    # schema，確保翻譯本身永遠不會因為候選詞這個附加功能而整批掛掉。
-    new_terms: list[TermCandidate] = []
-    try:
-        result2 = _run_with_retry(
-            _get_translate_agent(), prompt, "第二段 翻譯", on_status
-        )
-        translations = result2.output.translations
-        new_terms = result2.output.new_terms
-    except ModelHTTPError:
-        raise  # API 層錯誤（額度/過載）照舊往外拋，交給 UI 顯示
-    except Exception as e:
-        log.warning("完整翻譯輸出解析失敗，退回簡易翻譯（略過候選詞）：%s", e)
-        result2 = _run_with_retry(
-            _get_simple_translate_agent(), prompt, "第二段 翻譯（簡易備援）", on_status
-        )
-        translations = result2.output
+    translations, new_terms = _run_translate(prompt, on_status)
 
     # 翻譯成功了才把這批 key 標為已見，並淘汰最舊的
     for key in batch_keys:
