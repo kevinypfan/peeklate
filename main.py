@@ -27,7 +27,15 @@ def _worker(image_path: str | None, player_names: list[str]) -> None:
             png = grab_chat_region()
             log.info("截圖完成（%d bytes，區域 %s）", len(png), config.CHAT_REGION)
             save_capture(png)  # SAVE_CAPTURES 開啟時才會落地
-        _results.put(("ok", translate_new_lines(png, player_names)))
+        _results.put((
+            "ok",
+            translate_new_lines(
+                png,
+                player_names,
+                # 限流重試等待時把進度顯示到狀態列，不然看起來像當機
+                on_status=lambda msg: _results.put(("status", msg)),
+            ),
+        ))
     except Exception as e:  # API、截圖等任何失敗都回報到 UI
         log.exception("翻譯失敗")  # 完整 traceback 進 log
         _results.put(("error", e))
@@ -68,7 +76,9 @@ def main() -> None:
         except queue.Empty:
             pass
         else:
-            if status == "error":
+            if status == "status":
+                window.set_status(payload)
+            elif status == "error":
                 window.set_status(f"錯誤：{payload}")
             elif payload:
                 for line in payload:

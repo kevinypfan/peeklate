@@ -11,8 +11,10 @@ import json
 import logging
 import re
 import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, BinaryContent
@@ -49,7 +51,7 @@ class TermCandidate(BaseModel):
 
 class TranslationResult(BaseModel):
     translations: list[NumberedTranslation]
-    new_terms: list[TermCandidate]  # 可能為空
+    new_terms: list[TermCandidate] = []  # 弱模型常漏掉這欄，給預設值免得整批 parse 失敗
 
 
 # 這些是伺服器端暫時性錯誤（模型過載、限流等），值得自動重試；
@@ -65,12 +67,16 @@ _ocr_agent: Agent | None = None
 _translate_agent: Agent | None = None  # 含候選詞的完整輸出
 _translate_simple_agent: Agent | None = None  # 只翻譯，備援用
 
-# 已見過的訊息（去重用），key 為「玩家ID: 原文」
-_seen: set[str] = set()
+# 最近見過的訊息（去重用），key 為「玩家ID: 原文」。去重的目的只是「上次截圖
+# 還留在聊天框裡的行不要重翻」，所以只保留最近 _SEEN_MAX 筆（LRU）：同一句話
+# 隔一陣子再說仍會被翻出來，掛一整天記憶體也不會無限成長。
+_seen: OrderedDict[str, None] = OrderedDict()
+_SEEN_MAX = 200
 
 # 合併後的術語表（slang 覆蓋 glossary，key 一律小寫）。
 # 記錄來源檔的 mtime，檔案一改就重載，改完 slang.json 不用重開程式。
 _terms: dict[str, str] | None = None
+_terms_sorted: list[tuple[str, str]] = []  # 長詞優先排序的快取，_match_terms 用
 _terms_mtimes: tuple[float, float] = (0.0, 0.0)
 
 
@@ -85,7 +91,9 @@ def _retry_after(err: ModelHTTPError, attempt: int) -> float:
     return min(max(server, _BACKOFF_BASE * (2**attempt)), _MAX_BACKOFF)
 
 
-def _run_with_retry(agent: Agent, prompt, label: str):
+def _run_with_retry(
+    agent: Agent, prompt, label: str, on_status: Callable[[str], None] | None = None
+):
     model = agent.model.model_name
     for attempt in range(_MAX_RETRIES + 1):
         try:
@@ -100,6 +108,11 @@ def _run_with_retry(agent: Agent, prompt, label: str):
                     "%s（%s）HTTP %s，%.0fs 後重試（第 %d/%d 次）",
                     label, model, e.status_code, wait, attempt + 1, _MAX_RETRIES,
                 )
+                if on_status:
+                    on_status(
+                        f"{label}：HTTP {e.status_code}，{wait:.0f} 秒後重試"
+                        f"（第 {attempt + 1}/{_MAX_RETRIES} 次）…"
+                    )
                 time.sleep(wait)
                 continue
             log.error("%s（%s）失敗：HTTP %s %s", label, model, e.status_code, e.body)
@@ -164,7 +177,7 @@ def _load_terms() -> dict[str, str]:
 
     來源檔一有變動就重載，改完 slang.json 下次翻譯即生效、不用重開程式。
     """
-    global _terms, _terms_mtimes
+    global _terms, _terms_sorted, _terms_mtimes
     mtimes = (_mtime(config.GLOSSARY_PATH), _mtime(config.SLANG_PATH))
     if _terms is None or mtimes != _terms_mtimes:
         merged: dict[str, str] = {}
@@ -173,6 +186,7 @@ def _load_terms() -> dict[str, str]:
         for en, zh in _load_json(config.SLANG_PATH).items():
             merged[en.lower()] = zh  # slang 優先
         _terms = merged
+        _terms_sorted = sorted(merged.items(), key=lambda kv: -len(kv[0]))
         _terms_mtimes = mtimes
     return _terms
 
@@ -221,9 +235,10 @@ def _match_terms(texts: list[str], limit: int = 20) -> dict[str, str]:
     用 ASCII 詞邊界比對：短縮寫（esc）不會誤中 rescue，而 CJK 相鄰
     （打striker）仍算邊界、照樣命中。
     """
+    _load_terms()  # 確保 _terms_sorted 是最新的（來源檔變動會重載）
     joined = "\n".join(texts)
     hits: dict[str, str] = {}
-    for en, zh in sorted(_load_terms().items(), key=lambda kv: -len(kv[0])):
+    for en, zh in _terms_sorted:
         pat = rf"(?<![A-Za-z0-9]){re.escape(en)}(?![A-Za-z0-9])"
         if re.search(pat, joined, re.IGNORECASE):
             hits[en] = zh
@@ -232,11 +247,16 @@ def _match_terms(texts: list[str], limit: int = 20) -> dict[str, str]:
     return hits
 
 
-def translate_new_lines(png_bytes: bytes, player_names: list[str]) -> list[ChatLine]:
+def translate_new_lines(
+    png_bytes: bytes,
+    player_names: list[str],
+    on_status: Callable[[str], None] | None = None,
+) -> list[ChatLine]:
     """辨識截圖中的聊天訊息，過濾、去重後翻譯，只回傳這次新出現的行。
 
     player_names 非空 → 只留這些玩家說的話（不限頻道，部分符合即可）；
     空 → 只留頻道標籤符合 config.GROUP_CHANNEL_TAGS 的訊息。
+    on_status 給進度回報用（例如限流重試等待），從 worker thread 呼叫。
     從 worker thread 呼叫（不在 asyncio event loop 內），故可直接用 run_sync。
     """
     log.info("開始翻譯：只看 %s", player_names or "（不指定，用頻道過濾）")
@@ -244,6 +264,7 @@ def translate_new_lines(png_bytes: bytes, player_names: list[str]) -> list[ChatL
         _get_ocr_agent(),
         [BinaryContent(data=png_bytes, media_type="image/png")],
         "第一段 OCR 讀字",
+        on_status,
     )
     ocr_lines = result.output
     log.info("OCR 讀到 %d 則：", len(ocr_lines))
@@ -269,12 +290,20 @@ def translate_new_lines(png_bytes: bytes, player_names: list[str]) -> list[ChatL
         lines = list(ocr_lines)
         log.info("未指定玩家、頻道標籤也為空 → 不過濾，全收 %d 則", len(lines))
 
+    # 去重：這裡只挑出新行，key 等翻譯成功後才寫進 _seen —— 若翻譯 API 失敗，
+    # 下次觸發這批訊息仍會被重翻，不會永久丟失。
     new_lines: list[OcrLine] = []
+    batch_keys: list[str] = []
     for line in lines:
         key = f"{line.speaker}: {line.text.strip()}"
-        if not line.text.strip() or key in _seen:
+        if not line.text.strip():
             continue
-        _seen.add(key)
+        if key in _seen:
+            _seen.move_to_end(key)  # 還留在畫面上，維持「最近見過」不被淘汰
+            continue
+        if key in batch_keys:  # 同一張截圖內重複的行
+            continue
+        batch_keys.append(key)
         new_lines.append(line)
     log.info("去重後有 %d 則新訊息（已見過 %d 則）", len(new_lines), len(_seen))
     if not new_lines:
@@ -293,18 +322,34 @@ def translate_new_lines(png_bytes: bytes, player_names: list[str]) -> list[ChatL
 
     # 完整輸出（翻譯 + 候選詞）；弱模型偶爾 parse 失敗，就退回只翻譯的簡單
     # schema，確保翻譯本身永遠不會因為候選詞這個附加功能而整批掛掉。
+    new_terms: list[TermCandidate] = []
     try:
-        result2 = _run_with_retry(_get_translate_agent(), prompt, "第二段 翻譯")
+        result2 = _run_with_retry(
+            _get_translate_agent(), prompt, "第二段 翻譯", on_status
+        )
         translations = result2.output.translations
-        _log_candidates(result2.output.new_terms)
+        new_terms = result2.output.new_terms
     except ModelHTTPError:
         raise  # API 層錯誤（額度/過載）照舊往外拋，交給 UI 顯示
     except Exception as e:
         log.warning("完整翻譯輸出解析失敗，退回簡易翻譯（略過候選詞）：%s", e)
         result2 = _run_with_retry(
-            _get_simple_translate_agent(), prompt, "第二段 翻譯（簡易備援）"
+            _get_simple_translate_agent(), prompt, "第二段 翻譯（簡易備援）", on_status
         )
         translations = result2.output
+
+    # 翻譯成功了才把這批 key 標為已見，並淘汰最舊的
+    for key in batch_keys:
+        _seen[key] = None
+    while len(_seen) > _SEEN_MAX:
+        _seen.popitem(last=False)
+
+    # 候選詞只是附加功能，寫檔失敗不該拖垮已翻好的整批結果
+    try:
+        _log_candidates(new_terms)
+    except OSError as e:
+        log.warning("候選術語寫檔失敗，略過：%s", e)
+
     by_id = {t.id: t.translation for t in translations}
     out = [
         ChatLine(

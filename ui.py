@@ -11,6 +11,8 @@ FG_ORIG = config.COLOR_ORIG    # 原文（灰字）
 class TranslationWindow:
     """置頂小視窗,可自行拖到副螢幕。main.py 依此介面串接。"""
 
+    MAX_LINES = 600  # 顯示區保留的行數上限(約 200 則),掛整天也不會越跑越慢
+
     def __init__(self, on_translate, show_original=True, default_players=""):
         self.show_original = show_original
         self.root = tk.Tk()
@@ -83,6 +85,9 @@ class TranslationWindow:
         if self.show_original:
             self.text.insert("end", original + "\n", "orig")
         self.text.insert("end", translation + "\n", "trans")
+        overflow = int(self.text.index("end-1c").split(".")[0]) - self.MAX_LINES
+        if overflow > 0:
+            self.text.delete("1.0", f"{overflow + 1}.0")
         self.text.configure(state="disabled")
         self.text.see("end")
 
